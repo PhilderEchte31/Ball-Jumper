@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ball Jumper</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=SF+Pro+Text&display=swap');
+
+    body {
+      margin: 0;
+      background: linear-gradient(135deg, #f0f0f5, #d4d7dd);
+      font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+        Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    #container {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      background: linear-gradient(180deg, #e9ebf0, #c1c5d1);
+      border-radius: 20px;
+      box-shadow:
+        0 10px 30px rgba(0,0,0,0.15),
+        inset 0 0 40px #a9aec4;
+    }
+
+    #ui {
+      margin-top: 15px;
+      display: flex;
+      gap: 40px;
+      font-weight: 600;
+      font-size: 18px;
+      color: #3b3f4c;
+      text-shadow: 0 1px 1px rgba(255 255 255 / 0.6);
+    }
+
+    #buttons {
+      margin-top: 25px;
+      display: flex;
+      gap: 20px;
+    }
+
+    .game-button {
+      padding: 14px 48px;
+      border-radius: 24px;
+      border: none;
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.3s ease;
+    }
+
+    #startBtn {
+      background: linear-gradient(145deg, #5ac8fa, #3a99fc);
+      color: white;
+      box-shadow:
+        0 6px 15px rgba(58,153,252,0.6),
+        inset 0 -3px 8px rgba(255,255,255,0.9);
+    }
+
+    #startBtn:disabled {
+      background: #9acfff;
+      box-shadow: none;
+      cursor: default;
+    }
+
+    #startBtn:hover:not(:disabled) {
+      background: linear-gradient(145deg, #3a99fc, #5ac8fa);
+    }
+
+    #stopBtn {
+      background: linear-gradient(145deg, #ff6b6b, #ff4c4c);
+      color: white;
+      box-shadow:
+        0 6px 15px rgba(255,107,107,0.6),
+        inset 0 -3px 8px rgba(255,255,255,0.8);
+    }
+
+    #stopBtn:disabled {
+      background: #ffb3b3;
+      box-shadow: none;
+      cursor: default;
+    }
+
+    #stopBtn:hover:not(:disabled) {
+      background: linear-gradient(145deg, #ff4c4c, #ff6b6b);
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="canvas" width="400" height="600"></canvas>
+    <div id="ui">
+      <div>Leben: <span id="lives">3</span></div>
+      <div>Punkte: <span id="score">0</span></div>
+      <div>Level: <span id="level">1</span></div>
+    </div>
+    <div id="buttons">
+      <button id="startBtn" class="game-button">Spiel starten</button>
+      <button id="stopBtn" class="game-button" disabled>Spiel beenden</button>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const livesEl = document.getElementById('lives');
+      const scoreEl = document.getElementById('score');
+      const levelEl = document.getElementById('level');
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+
+      const WIDTH = canvas.width;
+      const HEIGHT = canvas.height;
+
+      let lives = 3;
+      let score = 0;
+      let level = 1;
+      let running = false;
+      let cameraY = 0;
+
+      const player = {
+        x: WIDTH / 2,
+        y: HEIGHT - 100,
+        radius: 20,
+        vy: 0,
+        vx: 0,
+        gravity: 0.8,
+        jumpPower: -15,
+        speed: 5,
+        onPlatform: false,
+      };
+
+      class Platform {
+        constructor(x, y, width, type = 'stable') {
+          this.x = x;
+          this.y = y;
+          this.width = width;
+          this.height = 15;
+          this.type = type;
+          this.broken = false;
+          this.dir = 1;
+          this.speed = 0;
+          if(type === 'moving') {
+            this.speed = 1.5 + Math.random() * 1.5;
+          }
+        }
+        update() {
+          if(this.type === 'moving') {
+            this.x += this.speed * this.dir;
+            if(this.x <= 0) this.dir = 1;
+            if(this.x + this.width >= WIDTH) this.dir = -1;
+          }
+        }
+        draw() {
+          if(this.broken) return;
+          ctx.fillStyle = (this.type === 'breakable') ? '#ff6b6b' : '#ffffff';
+          if(this.type === 'moving') ctx.fillStyle = '#5ac8fa';
+          ctx.shadowColor = ctx.fillStyle;
+          ctx.shadowBlur = 15;
+          ctx.fillRect(this.x, this.y - cameraY, this.width, this.height);
+          ctx.shadowBlur = 0;
+        }
+      }
+
+      let platforms = [];
+      let keys = {};
+
+      function updateUI() {
+        livesEl.textContent = lives;
+        scoreEl.textContent = Math.floor(score);
+        levelEl.textContent = level;
+      }
+
+      function resetGame() {
+        lives = 3;
+        score = 0;
+        level = 1;
+        cameraY = 0;
+        player.x = WIDTH / 2;
+        player.y = HEIGHT - 100;
+        player.vy = 0;
+        player.onPlatform = false;
+        keys = {};
+        platforms = [];
+
+        platforms.push(new Platform(WIDTH / 2 - 50, player.y + player.radius + 10, 100, 'stable'));
+        for(let i = 1; i < 15; i++) {
+          let width = 80 + Math.random() * 70;
+          let x = Math.random() * (WIDTH - width);
+          let y = player.y - i * 60;
+
+          let type = 'stable';
+          let r = Math.random();
+          if(level >= 2 && r > 0.85) type = 'moving';
+          if(level >= 3 && r > 0.95) type = 'breakable';
+
+          platforms.push(new Platform(x, y, width, type));
+        }
+        updateUI();
+      }
+
+      function generatePlatforms() {
+        while(platforms.length < 20) {
+          let minY = Math.min(...platforms.map(p => p.y));
+          let gap = 60;
+          let width = 80 + Math.random() * 70;
+          let x = Math.random() * (WIDTH - width);
+          let y = minY - gap;
+
+          level = Math.floor(score / 1000) + 1;
+
+          let r = Math.random();
+          let type = 'stable';
+          if(level >= 2 && r > 0.85) type = 'moving';
+          if(level >= 4 && r > 0.95) type = 'breakable';
+
+          platforms.push(new Platform(x, y, width, type));
+        }
+      }
+
+      function cleanPlatforms() {
+        platforms = platforms.filter(p => (p.y - cameraY) < HEIGHT + 100);
+      }
+
+      function updatePlayer() {
+        if(keys['ArrowLeft'] || keys['a']) {
+          player.x -= player.speed;
+          if(player.x - player.radius < 0) player.x = player.radius;
+        }
+        if(keys['ArrowRight'] || keys['d']) {
+          player.x += player.speed;
+          if(player.x + player.radius > WIDTH) player.x = WIDTH - player.radius;
+        }
+
+        player.vy += player.gravity;
+        player.y += player.vy;
+
+        player.onPlatform = false;
+
+        if(player.vy > 0) {
+          for(let plat of platforms) {
+            if(plat.broken) continue;
+            if(
+              player.y + player.radius > plat.y &&
+              player.y + player.radius < plat.y + plat.height &&
+              player.x > plat.x &&
+              player.x < plat.x + plat.width
+            ) {
+              player.y = plat.y - player.radius;
+              player.vy = 0;
+              player.onPlatform = true;
+
+              if(plat.type === 'breakable') {
+                plat.broken = true;
+              }
+
+              if(plat.type === 'moving') {
+                player.x += plat.speed * plat.dir;
+              }
+
+              break;
+            }
+          }
+        }
+
+        if(player.y - cameraY < HEIGHT / 3) {
+          cameraY = player.y - HEIGHT / 3;
+        }
+
+        score = Math.max(score, -player.y + HEIGHT);
+        level = Math.floor(score / 1000) + 1;
+
+        if(player.y - cameraY > HEIGHT + 50) {
+          lives--;
+          if(lives <= 0) {
+            running = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            alert(`Game Over!\nPunkte: ${Math.floor(score)}\nLevel: ${level}`);
+          } else {
+            player.x = WIDTH / 2;
+            player.y = cameraY + HEIGHT - 100;
+            player.vy = 0;
+          }
+        }
+      }
+
+      function drawPlayer() {
+        ctx.beginPath();
+        let gradient = ctx.createRadialGradient(player.x, player.y - cameraY, player.radius*0.3, player.x, player.y - cameraY, player.radius);
+        gradient.addColorStop(0, '#ff6666');
+        gradient.addColorStop(1, '#bb2222');
+        ctx.fillStyle = gradient;
+        ctx.shadowColor = '#ff2222';
+        ctx.shadowBlur = 15;
+        ctx.arc(player.x, player.y - cameraY, player.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.beginPath();
+        ctx.ellipse(player.x - player.radius/3, player.y - player.radius/3 - cameraY, player.radius/2, player.radius/3, Math.PI/4, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fill();
+      }
+
+      function drawPlatforms() {
+        platforms.forEach(p => p.draw());
+      }
+
+      function loop() {
+        if(!running) return;
+
+        updatePlayer();
+        platforms.forEach(p => p.update());
+
+        generatePlatforms();
+        cleanPlatforms();
+
+        ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+        drawPlatforms();
+        drawPlayer();
+
+        updateUI();
+
+        requestAnimationFrame(loop);
+      }
+
+      function jump() {
+        if(player.onPlatform) {
+          player.vy = player.jumpPower;
+          player.onPlatform = false;
+        }
+      }
+
+      window.addEventListener('keydown', e => {
+        keys[e.key] = true;
+        if(e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w') {
+          e.preventDefault();
+          jump();
+        }
+      });
+
+      window.addEventListener('keyup', e => {
+        keys[e.key] = false;
+      });
+
+      startBtn.addEventListener('click', () => {
+        resetGame();
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        loop();
+      });
+
+      stopBtn.addEventListener('click', () => {
+        running = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      });
+    })();
+  </script>
+</body>
+</html>
